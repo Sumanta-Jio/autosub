@@ -17,12 +17,13 @@ import tempfile
 import wave
 import json
 import requests
+from io import BytesIO
 try:
     from json.decoder import JSONDecodeError
 except ImportError:
     JSONDecodeError = ValueError
 
-from googleapiclient.discovery import build
+# from googleapiclient.discovery import build
 from progressbar import ProgressBar, Percentage, Bar, ETA
 
 from autosub.constants import (
@@ -66,6 +67,7 @@ class FLACConverter(object): # pylint: disable=too-few-public-methods
             start = max(0, start - self.include_before)
             end += self.include_after
             temp = tempfile.NamedTemporaryFile(suffix='.flac', delete=False)
+            #print(temp.name)
             command = ["ffmpeg", "-ss", str(start), "-t", str(end - start),
                        "-y", "-i", self.source_path,
                        "-loglevel", "error", temp.name]
@@ -93,60 +95,63 @@ class SpeechRecognizer(object): # pylint: disable=too-few-public-methods
     def __call__(self, data):
         try:
             for _ in range(self.retries):
-                url = GOOGLE_SPEECH_API_URL.format(lang=self.language, key=self.api_key)
-                headers = {"Content-Type": "audio/x-flac; rate=%d" % self.rate}
-
+                url = GOOGLE_SPEECH_API_URL
+                #headers = {"Content-Type": "audio/mpeg; rate=%d" % self.rate}
+                file_data = BytesIO(data)
+                files = {'audio': ('audio.mp3', file_data)}
                 try:
-                    resp = requests.post(url, data=data, headers=headers)
+                    #print("xxxx", data)
+                    resp = requests.post(url, files=files)
                 except requests.exceptions.ConnectionError:
                     continue
 
-                for line in resp.content.decode('utf-8').split("\n"):
-                    try:
-                        line = json.loads(line)
-                        line = line['result'][0]['alternative'][0]['transcript']
-                        return line[:1].upper() + line[1:]
-                    except IndexError:
-                        # no result
-                        continue
-                    except JSONDecodeError:
-                        continue
+                return resp.content.decode('utf-8').split("\n")
+                # for line in resp.content.decode('utf-8').split("\n"):
+                #     try:
+                #         line = json.loads(line)
+                #         line = line['result'][0]['alternative'][0]['transcript']
+                #         return line[:1].upper() + line[1:]
+                #     except IndexError:
+                #         # no result
+                #         continue
+                #     except JSONDecodeError:
+                #         continue
 
         except KeyboardInterrupt:
             return None
 
 
-class Translator(object): # pylint: disable=too-few-public-methods
-    """
-    Class for translating a sentence from a one language to another.
-    """
-    def __init__(self, language, api_key, src, dst):
-        self.language = language
-        self.api_key = api_key
-        self.service = build('translate', 'v2',
-                             developerKey=self.api_key)
-        self.src = src
-        self.dst = dst
+# class Translator(object): # pylint: disable=too-few-public-methods
+#     """
+#     Class for translating a sentence from a one language to another.
+#     """
+#     def __init__(self, language, api_key, src, dst):
+#         self.language = language
+#         self.api_key = api_key
+#         self.service = build('translate', 'v2',
+#                              developerKey=self.api_key)
+#         self.src = src
+#         self.dst = dst
 
-    def __call__(self, sentence):
-        try:
-            if not sentence:
-                return None
+#     def __call__(self, sentence):
+#         try:
+#             if not sentence:
+#                 return None
 
-            result = self.service.translations().list( # pylint: disable=no-member
-                source=self.src,
-                target=self.dst,
-                q=[sentence]
-            ).execute()
+#             result = self.service.translations().list( # pylint: disable=no-member
+#                 source=self.src,
+#                 target=self.dst,
+#                 q=[sentence]
+#             ).execute()
 
-            if 'translations' in result and result['translations'] and \
-                'translatedText' in result['translations'][0]:
-                return result['translations'][0]['translatedText']
+#             if 'translations' in result and result['translations'] and \
+#                 'translatedText' in result['translations'][0]:
+#                 return result['translations'][0]['translatedText']
 
-            return None
+#             return None
 
-        except KeyboardInterrupt:
-            return None
+#         except KeyboardInterrupt:
+#             return None
 
 
 def which(program):
@@ -267,31 +272,32 @@ def generate_subtitles( # pylint: disable=too-many-locals,too-many-arguments
             pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
 
             for i, transcript in enumerate(pool.imap(recognizer, extracted_regions)):
+                print(transcript)
                 transcripts.append(transcript)
                 pbar.update(i)
             pbar.finish()
 
-            if src_language.split("-")[0] != dst_language.split("-")[0]:
-                if api_key:
-                    google_translate_api_key = api_key
-                    translator = Translator(dst_language, google_translate_api_key,
-                                            dst=dst_language,
-                                            src=src_language)
-                    prompt = "Translating from {0} to {1}: ".format(src_language, dst_language)
-                    widgets = [prompt, Percentage(), ' ', Bar(), ' ', ETA()]
-                    pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
-                    translated_transcripts = []
-                    for i, transcript in enumerate(pool.imap(translator, transcripts)):
-                        translated_transcripts.append(transcript)
-                        pbar.update(i)
-                    pbar.finish()
-                    transcripts = translated_transcripts
-                else:
-                    print(
-                        "Error: Subtitle translation requires specified Google Translate API key. "
-                        "See --help for further information."
-                    )
-                    return 1
+            # if src_language.split("-")[0] != dst_language.split("-")[0]:
+            #     if api_key:
+            #         google_translate_api_key = api_key
+            #         translator = Translator(dst_language, google_translate_api_key,
+            #                                 dst=dst_language,
+            #                                 src=src_language)
+            #         prompt = "Translating from {0} to {1}: ".format(src_language, dst_language)
+            #         widgets = [prompt, Percentage(), ' ', Bar(), ' ', ETA()]
+            #         pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
+            #         translated_transcripts = []
+            #         for i, transcript in enumerate(pool.imap(translator, transcripts)):
+            #             translated_transcripts.append(transcript)
+            #             pbar.update(i)
+            #         pbar.finish()
+            #         transcripts = translated_transcripts
+            #     else:
+            #         print(
+            #             "Error: Subtitle translation requires specified Google Translate API key. "
+            #             "See --help for further information."
+            #         )
+            #         return 1
 
         except KeyboardInterrupt:
             pbar.finish()
